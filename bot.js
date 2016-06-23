@@ -5,7 +5,9 @@ var nickserv = require( 'nickserv' );
 var google = require( 'google' );
 var request = require( 'request' );
 var cheerio = require( 'cheerio' );
+var jsdom = require( 'jsdom' );
 var moment = require( 'moment-timezone' );
+var async = require( 'async' );
 
 // Initialize
 google.resultsPerPage = 1;
@@ -16,6 +18,7 @@ var flood = [];
 // Create the bot
 var bot = new irc.Client( config.server, config.name, {
 	// channels: config.channels,
+	localAddress: config.localAddress,
 	realName: '##wordpress IRC Bot',
 	autoRejoin: true
 });
@@ -114,9 +117,6 @@ bot.addListener( 'nick', function ( oldnick, newnick, channels, message ) {
 
 // Message events
 bot.addListener( 'message', function( from, to, text, message ) {
-	if ( config.muted.indexOf( message.args[0] ) > -1 ) {
-		return;
-	}
 	// Debug incoming messages
 	if ( config.debug ) {
 		console.log( '============ From ============' );
@@ -138,10 +138,41 @@ bot.addListener( 'message', function( from, to, text, message ) {
 	} else {
 		// Public message handler
 		// floodCheck( message );
+
+		// Check for admin
+		var isAdmin = false;
+		if ( config.admins.length ) {
+			config.admins.forEach( function( value, index, array ) {
+				if ( value.trim().toLowerCase() == from.trim().toLowerCase() ) {
+					isAdmin = true;
+				}
+			});
+		}
+
+		// Check for ignored
+		if ( config.ignore.length ) {
+			config.ignore.forEach( function( value, index, array ) {
+				if ( value.trim().toLowerCase() == from.trim().toLowerCase() ) {
+					var isIgnored = true;
+				}
+			});
+			var isIgnored = isIgnored ? isIgnored : false;
+		}
+
+		// Break up command string
 		var command = text.match( /.(\w+)/ );
 		if ( config.debug ) console.log( 'Public Message Handler!!' );
 		if ( config.debug ) console.log( command );
 
+		// Log all channel messages
+		if ( config.log ) console.log( '[' + to + '] ' + from + ': ' + text + ' - ' + moment().format() );
+
+		// Check if this message needs to be ignored
+		if ( ( isIgnored && ! isAdmin ) || config.muted.indexOf( message.args[0] ) > -1 ) {
+			return;
+		}
+
+		// Parse commands
 		if ( command && command.length && command[0].charAt(0) == '.' ) {
 			// Initialize
 			var cmd = command[1];
@@ -163,6 +194,69 @@ bot.addListener( 'message', function( from, to, text, message ) {
 
 			// Process command
 			switch ( cmd ) {
+				// Scrape
+				case 'scrape':
+					if ( isAdmin ) {
+						// Setup site and selector
+						var selector = str.match( /'(.*)'/ );
+						selector = selector[1];
+						var site = str.split( ' ' );
+						site = site[0];
+
+						// Scrape the site for contents from selector
+						request( site, function( error, response, body ) {
+							if ( ! error) {
+								// Load jsdom for DOM parsing
+								jsdom.env(
+									body,
+									[ 'http://code.jquery.com/jquery-2.2.3.min.js' ],
+									function( err, window ) {
+										if ( err ) console.log( 'err:', err );
+										var $ = window.jQuery;
+										console.log( 'body:', $('body').html() );
+										var msg = $( selector ).text();
+										bot.say( message.args[0], who ? who + ': ' + msg : from + ': ' + msg );
+									}
+								);
+							} else {
+								console.log( error );
+							}
+						});
+					}
+					break;
+
+				// Ignore
+				case 'ignore':
+					if ( isAdmin ) {
+						// Send ignored message
+						if ( config.ignore.length ) {
+							if ( config.ignore.indexOf( str ) > -1 ) {
+								var msg = str + ' is already being ignored';
+							} else {
+								config.ignore.push( str );
+								var msg = str + ' is now being ignored';
+							}
+							bot.say( message.args[0], msg );
+						}
+					}
+					break;
+
+				// Unignore
+				case 'unignore':
+					if ( isAdmin ) {
+						// Send ignored message
+						if ( config.ignore.length ) {
+							if ( config.ignore.indexOf( str ) > -1 ) {
+								config.ignore.splice( config.ignore.indexOf( str ), 1 );
+								var msg = str + ' is no longer being ignored';
+							} else {
+								var msg = str + ' is not being ignored';
+							}
+							bot.say( message.args[0], msg );
+						}
+					}
+					break;
+
 				// Help
 				case 'help':
 					var commands = [ '.g', '.c', '.p', '.seen', '.tell', '.first', '.paste', '.hierarchy', '._', '.blame', '.ask', '.say' ];
@@ -171,9 +265,28 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					console.log( 'sending help message to: ' + who ? who : from );
 					break;
 
-				// Google Search
+				// Codex search
+				case 'c':
+				case 'codex':
+					if ( config.debug ) console.log( '[Codex search] for: ' + str );
+					google( str + ' site:codex.wordpress.org OR site:developer.wordpress.org', function ( err, next, links ) {
+						if ( err && config.debug ) console.error( err );
+						// Show the search results
+						bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+					});
+					break;
+
+				// FML command
+				case 'fml':
+					var answers = [ 'http://s2.quickmeme.com/img/03/0353203cbc2e18150f8c7f45cb7d64efa57d8ac5bd1059add3576fc94ca702f2.jpg', 'http://i3.kym-cdn.com/photos/images/facebook/000/089/506/128989967490130539.jpg', 'http://img.memecdn.com/fml_o_577538.jpg', 'http://img.memecdn.com/FML-horse_o_141347.jpg', 'http://i0.kym-cdn.com/entries/icons/facebook/000/004/706/FML.jpg', 'http://don.citarella.net/wp-content/uploads/2012/05/sml.jpg', 'https://cdn.meme.am/instances/500x/55087958.jpg', 'https://cdn.meme.am/instances/500x/10377021.jpg', 'http://memecrunch.com/meme/9I7N5/fml/image.jpg', 'http://i2.kym-cdn.com/photos/images/list/000/478/993/5b1.jpg' ];
+					var answer = answers[ Math.floor( Math.random() * answers.length ) ];
+					var msg = who ? who + ': ' + answer : from + ': ' + answer;
+					bot.say( message.args[0], msg );
+					break;
+
+				// Google search
 				case 'g':
-					if ( config.debug ) console.log( '[Google Search] for: ' + str );
+					if ( config.debug ) console.log( '[Google search] for: ' + str );
 					google( str, function ( err, next, links ) {
 						if ( err && config.debug ) console.error( err );
 						// Show the search results
@@ -181,31 +294,41 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					});
 					break;
 
-				// Codex Search
-				case 'c':
-					if ( config.debug ) console.log( '[Codex Search] for: ' + str );
-					google( str + ' site:wordpress.org', function ( err, next, links ) {
+				// Hookr.io search
+				case 'h':
+				case 'hookr':
+					if ( config.debug ) console.log( '[Hookr search] for: ' + str );
+					google( str + ' site:hookr.io', function ( err, next, links ) {
 						if ( err && config.debug ) console.error( err );
 						// Show the search results
 						bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
 					});
 					break;
 
-				// YouTube Search
-				case 'y':
-					if ( config.debug ) console.log( '[YouTube Search] for: ' + str );
-					google( str + ' site:youtube.com', function ( err, next, links ) {
+				// JetPack search
+				case 'j':
+				case 'jetpack':
+					if ( config.debug ) console.log( '[JetPack search] for: ' + str );
+					google( str + ' site:developer.jetpack.com', function ( err, next, links ) {
 						if ( err && config.debug ) console.error( err );
-						if ( config.debug ) console.log( links );
 						// Show the search results
-						if ( links[0].link ) bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+						bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
 					});
 					break;
 
-				// Plugin Search
+				// lmgtfy.com search
+				case 'l':
+				case 'lmgtfy':
+					if ( config.debug ) console.log( '[lmgtfy.com search] for: ' + str );
+					// Show the search results
+					var link = 'http://lmgtfy.com/?q=' + encodeURIComponent( str );
+					bot.say( to, who ? who + ': ' + link : from + ': ' + link );
+					break;
+
+				// Plugin search
 				case 'p':
-					if ( config.debug ) console.log( '[Plugin Search] for: ' + str );
-					google( str + ' site:https://wordpress.org/plugins', function ( err, next, links ) {
+					if ( config.debug ) console.log( '[Plugin search] for: ' + str );
+					google( str + ' wordpress plugin site:https://wordpress.org/plugins', function ( err, next, links ) {
 						if ( err && config.debug ) console.error( err );
 						if ( config.debug ) console.log( links );
 						// Show the search results
@@ -215,14 +338,36 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					});
 					break;
 
+				// wpseek.com search
+				case 'wps':
+				case 'wpseek':
+					if ( config.debug ) console.log( '[wpseek.com search] for: ' + str );
+					google( str + ' site:wpseek.com', function ( err, next, links ) {
+						if ( err && config.debug ) console.error( err );
+						// Show the search results
+						bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+					});
+					break;
+
+				// YouTube search
+				case 'y':
+					if ( config.debug ) console.log( '[YouTube search] for: ' + str );
+					google( str + ' site:youtube.com', function ( err, next, links ) {
+						if ( err && config.debug ) console.error( err );
+						if ( config.debug ) console.log( links );
+						// Show the search results
+						if ( links[0].link ) bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+					});
+					break;
+
 				// Seen command
 				case 'seen':
 					if ( from != str ) {
 						var none = true;
 						if ( config.debug ) {
-							console.log( '[Seen Search] for: ' + str );
+							console.log( '[Seen search] for: ' + str );
 							console.log( bot.chans );
-							console.log( 'Search through:' );
+							console.log( 'search through:' );
 							console.log( config.channels );
 						}
 						// Check channels first
@@ -241,7 +386,7 @@ bot.addListener( 'message', function( from, to, text, message ) {
 								}
 							}
 						});
-						// Search through seen array
+						// search through seen array
 						seen.forEach( function( value, index, array ) {
 							if ( value.nick == str ) {
 								// Setup the seen message
@@ -267,6 +412,14 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					} else {
 						bot.say( to, 'That\'s hilarious ' + from + '...' );
 					}
+					break;
+
+				// SMH command
+				case 'smh':
+					var answers = [ 'http://s2.quickmeme.com/img/ae/ae2a9837161f5174eccfae925311dc094914aeaa15b11e520e703c00fa185510.jpg', 'http://s2.quickmeme.com/img/09/092c26e28f6359e729113ccaa30ecc07dae8ba650f2219f30c06dc7307df5c67.jpg', 'https://s-media-cache-ak0.pinimg.com/236x/14/0a/05/140a05c7b046a5579dff3d3f913462cb.jpg', 'https://cdn.meme.am/instances/55666989.jpg', 'http://s2.quickmeme.com/img/fb/fbb36dc9b068d38c8295d49050332a772d04f679950e5d690ad79194285742b2.jpg', 'https://cdn.meme.am/instances/55078191.jpg' ];
+					var answer = answers[ Math.floor( Math.random() * answers.length ) ];
+					var msg = who ? who + ': ' + answer : from + ': ' + answer;
+					bot.say( message.args[0], msg );
 					break;
 
 				// Tell command
@@ -298,9 +451,17 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					request( 'https://wordpress.org/download/counter/?ajaxupdate=1', function( error, response, body ) {
 						if ( ! error) {
 							var msg = 'WordPress has been downloaded ' + body + ' times.';
-							bot.say( message.args[0], who ? who + ': ' + msg : from + ': ' + msg );							
+							bot.say( message.args[0], who ? who + ': ' + msg : from + ': ' + msg );
 						}
 					});
+					break;
+
+				// Facepalm command
+				case 'facepalm':
+					var answers = [ 'http://4.bp.blogspot.com/-mgnWPcZJcz0/U9K0TnmdyWI/AAAAAAAAD2Q/fpaFlMU5ZOo/s1600/homer_facepalm.jpg', 'http://static.giantbomb.com/uploads/original/8/88747/1772665-pope_facepalm.jpg', 'http://memesvault.com/wp-content/uploads/Extreme-Facepalm-Gif-06.png', 'http://i.imgur.com/wY9Mn.png' ];
+					var answer = answers[ Math.floor( Math.random() * answers.length ) ];
+					var msg = who ? who + ': ' + answer : from + ': ' + answer;
+					bot.say( message.args[0], msg );
 					break;
 
 				// First command
@@ -328,6 +489,18 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					bot.say( message.args[0], who ? who + ': ' + msg : from + ': ' + msg );
 					break;
 
+				// Asking command
+				case 'asking':
+					var msg = 'When asking a question make sure to include the following information: 1) What you want to achieve. 2) How you are attempting to achieve it. 3) What you expect to happen. 4) What is actually happening.';
+					bot.say( message.args[0], who ? who + ': ' + msg : from + ': ' + msg );
+					break;
+
+				// Linking command
+				case 'linking':
+					var msg = 'When linking to your website while asking for help, please tell us specifically where to look on the website and what to click to initiate the interaction you are trying to fix';
+					bot.say( message.args[0], who ? who + ': ' + msg : from + ': ' + msg );
+					break;
+
 				// Hierarchy command
 				case 'hierarchy':
 					var msg = 'Please refer to the WordPress template hierarchy https://developer.wordpress.org/themes/basics/template-hierarchy/';
@@ -348,9 +521,20 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					bot.say( message.args[0], msg );
 					break;
 
+				// Cry command
+				case 'cry':
+					var prefix = who ? who + ': ' : '';
+					var msg = prefix + '(╯︵╰,)';
+					bot.say( message.args[0], msg );
+					break;
+
 				// Blame command
 				case 'blame':
-					var msg = who ? who + ': ' + 'It\'s all ' + str + '\'s fault!' : 'It\'s all ' + str + '\'s fault!';
+					if ( str == bot.nick ) {
+						var msg = "That's hilarious...";
+					} else {
+						var msg = who ? who + ': ' + 'It\'s all ' + str + '\'s fault!' : 'It\'s all ' + str + '\'s fault!';
+					}
 					bot.say( message.args[0], msg );
 					break;
 
@@ -372,17 +556,37 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					bot.say( message.args[0], msg );
 					break;
 
-				// Cry command
-				case 'cry':
-					var prefix = who ? who + ': ' : '';
-					var msg = prefix + '(╯︵╰,)';
-					bot.say( message.args[0], msg );
-					break;
-
 				// YOLO command
 				case 'yolo':
 					var prefix = who ? who + ': ' : '';
 					var msg = prefix + 'Yᵒᵘ Oᶰˡʸ Lᶤᵛᵉ Oᶰᶜᵉ';
+					bot.say( message.args[0], msg );
+					break;
+
+				// Pfft command
+				case 'pfft':
+				case 'pff':
+				case 'pft':
+				case 'pf':
+					var answers = [ 'https://s-media-cache-ak0.pinimg.com/736x/a9/26/8f/a9268f451c95945e928121cd91c41281.jpg', 'http://reactiongif.org/wp-content/uploads/GIF/2014/08/GIF-bfd-big-deal-dwight-meh-sarcastic-the-office-uncaring-whatever-GIF.gif', 'https://static1.fjcdn.com/thumbnails/comments/Pfft+that+horrible+tattoo+does+_5e04cac8f2e8f5a827be0b3123a888b1.png', 'http://data.whicdn.com/images/196440384/large.jpg', 'https://coydavidson.files.wordpress.com/2012/06/pfft.jpg', 'https://tromoticons.files.wordpress.com/2012/11/yao-ming-pff.png', 'https://cdn.meme.am/instances/500x/50075843.jpg' ];
+					var answer = answers[ Math.floor( Math.random() * answers.length ) ];
+					var msg = who ? who + ': ' + answer : from + ': ' + answer;
+					bot.say( message.args[0], msg );
+					break;
+
+				// Hi command
+				case 'hi':
+					var answers = [ 'https://s-media-cache-ak0.pinimg.com/originals/7d/8c/8d/7d8c8d1fd7b01d033dcbad20ca6053a5.jpg', 'https://media.giphy.com/media/8vc2rMUDjhy6Y/giphy.gif', 'https://media.giphy.com/media/JGKwzgpKXVYaY/giphy.gif', 'http://p.fod4.com/p/media/15622856b6/YTKd82zSAuXVKbCHrGj5_Star%20Trek%20Patrick%20Stewart.gif', 'http://www.hellocreative.com/images/Hello-Funny.gif', 'https://media.giphy.com/media/rcE4NmvORkx9u/giphy.gif', 'http://p.fod4.com/p/media/15622856b6/blJcJsQKQjGARx7rLGQg_Whale%20Hello.gif' ];
+					var answer = answers[ Math.floor( Math.random() * answers.length ) ];
+					var msg = who ? who + ': ' + answer : from + ': ' + answer;
+					bot.say( message.args[0], msg );
+					break;
+
+				// Bye command
+				case 'bye':
+					var answers = [ 'https://janeaustenrunsmylife.files.wordpress.com/2014/02/jezebel_buh-bye_wave-goodbye_brilliantsunrise-pb.gif', 'http://p.fod4.com/p/media/15622856b6/YTKd82zSAuXVKbCHrGj5_Star%20Trek%20Patrick%20Stewart.gif', 'http://25.media.tumblr.com/tumblr_lt3cwzIDoU1qipyqco1_500.gif', 'http://media3.popsugar-assets.com/files/thumbor/Kq9kVeZDktjN26PTW3rBFPtYX8A/fit-in/2048xorig/filters:format_auto.!!.:strip_icc.!!./2014/11/06/317/n/1922283/728c12978f2d92be_tumblr_mwji67R3w71sj1ltqo1_500/i/When-Woody-says-goodbye-you-SOBBED.gif', 'http://p.fod4.com/p/media/15622856b6/Qcz8AXFORCS4NkpouQiT_Clarissa.gif', 'http://lovelace-media.imgix.net/uploads/615/8cf94510-9dba-0133-a027-0e7c926a42af.gif', 'http://i.imgur.com/OZNYKGY.gif' ];
+					var answer = answers[ Math.floor( Math.random() * answers.length ) ];
+					var msg = who ? who + ': ' + answer : from + ': ' + answer;
 					bot.say( message.args[0], msg );
 					break;
 

@@ -4,6 +4,7 @@
   "description": "An IRC bot to do anything we determine is useful",
   "main": "bot.js",
   "dependencies": {
+    "async": "^1.5.2",
     "cheerio": "^0.19.0",
     "google": "^1.4.0",
     "google-search": "0.0.3",
