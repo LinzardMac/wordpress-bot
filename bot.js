@@ -9,7 +9,7 @@ var jsdom = require( 'jsdom' );
 var moment = require( 'moment-timezone' );
 var async = require( 'async' );
 
-// Initialize
+// Initialize global bot variables
 google.resultsPerPage = 1;
 var tell = [];
 var seen = [];
@@ -23,7 +23,7 @@ var bot = new irc.Client( config.server, config.name, {
 	autoRejoin: true
 });
 
-// Use nickserv to handle communication between
+// Instantiate nickserv to handle communication between bot and services
 var ns = new nickserv( config.name, {
 	password: config.pass,
 	email: config.email
@@ -53,14 +53,35 @@ bot.addListener( 'join', function( channel, who ) {
 	// When other users join the channel (not the bot)
 	if ( bot.nick != who ) {
 		// Check for pending .tell commands for this user
+		var msg = '';
 		var told = [];
+		var inbox = [];
+		var different = [];
+		// Loop through each message and build one big message to deliver to the user
 		tell.forEach( function( value, index, array ) {
 			if ( value.from == who ) {
-				if ( config.debug ) console.log( 'Delivering .tell message to ' + who );
-				bot.say( who, 'Message from ' + value.from + ': ' + value.message );
+				if ( config.debug ) console.log( 'Delivering .tell message #' + index + ' to ' + who );
+				var date = moment().tz( 'America/New_York' ).format( 'M/DD/YY h:mm:ssa z' );
+				msg = '[' + value.from + ' ' + date + ']: ' + value.message;
+				inbox.push( msg );
 				told.push( index );
+				if ( different.indexOf( value.from ) < 0 ) different.push( value.from );
 			}
 		});
+
+		// Display their messages without flooding the channel
+		if ( inbox.length > 4 ) {
+			var plural = {
+				inbox: ( inbox.length > 1 ? 's' : '' ),
+				different: ( different.length > 1 ? 's' : '' )
+			};
+			var msg = 'You have ' + inbox.length + ' message' + plural.inbox + ' in your inbox from ' + different.length + ' user' + plural.different + '. Type .inbox to access your messages one page at a time while trying not to flood the channel ;)';
+			bot.say( channel, msg );
+		} else {
+			inbox.forEach( function( value, index, array ) {
+				bot.say( channel, who + ': ' + value );
+			});
+		}
 
 		// Remove the messages that have been delivered
 		if ( told.length ) {
@@ -160,7 +181,7 @@ bot.addListener( 'message', function( from, to, text, message ) {
 		}
 
 		// Break up command string
-		var command = text.match( /.(\w+)/ );
+		var command = text.match( /^\.(\w+)/ );
 		if ( config.debug ) console.log( 'Public Message Handler!!' );
 		if ( config.debug ) console.log( command );
 
@@ -241,6 +262,49 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					}
 					break;
 
+				// Inbox
+				case 'inbox':
+					// Check for pending .tell commands for this user
+					var msg = '';
+					var told = [];
+					var inbox = [];
+
+					// Loop through each message and build one big message to deliver to the user
+					tell.forEach( function( value, index, array ) {
+						if ( value.from == from && told.length < 4 ) {
+							if ( config.debug ) console.log( 'Delivering .tell message #' + index + ' to ' + from );
+							msg = '[' + value.from + ' ' + value.date + ']: ' + value.message;
+							inbox.push( msg );
+							told.push( index );
+						}
+					});
+
+					// Display their messages without flooding the channel
+					if ( inbox.length > 4 ) {
+						if ( config.debug ) console.log( '> 4 messages in inbox' );
+						for ( var i = 0; i < 4; i++ ) {
+							bot.say( message.args[0], from + ': ' + inbox[ i ] );
+						}
+						for ( var i = 0; i < 4; i++ ) {
+							inbox.shift();
+						}
+					} else if ( ! inbox.length ) {
+						bot.say( message.args[0], from + ': you have no messages in your inbox' );
+					} else {
+						if ( config.debug ) console.log( inbox.length + ' messages in inbox' );
+						inbox.forEach( function( value, index, array ) {
+							bot.say( message.args[0], from + ': ' + inbox[ index ] );
+						});
+					}
+
+					// Remove the messages that have been delivered
+					if ( told.length ) {
+						told.forEach( function( value, index, array ) {
+							tell.splice( value, 1 );
+						});
+					}
+					break;
+
 				// Unignore
 				case 'unignore':
 					if ( isAdmin ) {
@@ -278,7 +342,7 @@ bot.addListener( 'message', function( from, to, text, message ) {
 
 				// FML command
 				case 'fml':
-					var answers = [ 'http://s2.quickmeme.com/img/03/0353203cbc2e18150f8c7f45cb7d64efa57d8ac5bd1059add3576fc94ca702f2.jpg', 'http://i3.kym-cdn.com/photos/images/facebook/000/089/506/128989967490130539.jpg', 'http://img.memecdn.com/fml_o_577538.jpg', 'http://img.memecdn.com/FML-horse_o_141347.jpg', 'http://i0.kym-cdn.com/entries/icons/facebook/000/004/706/FML.jpg', 'http://don.citarella.net/wp-content/uploads/2012/05/sml.jpg', 'https://cdn.meme.am/instances/500x/55087958.jpg', 'https://cdn.meme.am/instances/500x/10377021.jpg', 'http://memecrunch.com/meme/9I7N5/fml/image.jpg', 'http://i2.kym-cdn.com/photos/images/list/000/478/993/5b1.jpg' ];
+					var answers = [ 'http://s2.quickmeme.com/img/03/0353203cbc2e18150f8c7f45cb7d64efa57d8ac5bd1059add3576fc94ca702f2.jpg', 'http://i3.kym-cdn.com/photos/images/facebook/000/089/506/128989967490130539.jpg', 'http://img.memecdn.com/fml_o_577538.jpg', 'http://img.memecdn.com/FML-horse_o_141347.jpg', 'http://i0.kym-cdn.com/entries/icons/facebook/000/004/706/FML.jpg', 'http://don.citarella.net/wp-content/uploads/2012/05/sml.jpg', 'https://cdn.meme.am/instances/500x/55087958.jpg', 'https://cdn.meme.am/instances/500x/10377021.jpg', 'http://i2.kym-cdn.com/photos/images/list/000/478/993/5b1.jpg' ];
 					var answer = answers[ Math.floor( Math.random() * answers.length ) ];
 					var msg = who ? who + ': ' + answer : from + ': ' + answer;
 					bot.say( message.args[0], msg );
@@ -306,10 +370,29 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					break;
 
 				// JetPack search
-				case 'j':
 				case 'jetpack':
 					if ( config.debug ) console.log( '[JetPack search] for: ' + str );
 					google( str + ' site:developer.jetpack.com', function ( err, next, links ) {
+						if ( err && config.debug ) console.error( err );
+						// Show the search results
+						bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+					});
+					break;
+
+				// jQuery API search
+				case 'jquery':
+					if ( config.debug ) console.log( '[jQuery API search] for: ' + str );
+					google( str + ' site:api.jquery.com', function ( err, next, links ) {
+						if ( err && config.debug ) console.error( err );
+						// Show the search results
+						bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+					});
+					break;
+
+				// jQuery UI API search
+				case 'jqueryui':
+					if ( config.debug ) console.log( '[jQuery UI API search] for: ' + str );
+					google( str + ' site:jqueryui.com', function ( err, next, links ) {
 						if ( err && config.debug ) console.error( err );
 						// Show the search results
 						bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
@@ -338,6 +421,19 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					});
 					break;
 
+				// Plugin search
+				case 'php':
+					if ( config.debug ) console.log( '[PHP search] for: ' + str );
+					google( str + ' site:http://php.net', function ( err, next, links ) {
+						if ( err && config.debug ) console.error( err );
+						if ( config.debug ) console.log( links );
+						// Show the search results
+						if ( links.length ) {
+							bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+						}
+					});
+					break;
+
 				// wpseek.com search
 				case 'wps':
 				case 'wpseek':
@@ -351,12 +447,17 @@ bot.addListener( 'message', function( from, to, text, message ) {
 
 				// YouTube search
 				case 'y':
+				case 'youtube':
 					if ( config.debug ) console.log( '[YouTube search] for: ' + str );
 					google( str + ' site:youtube.com', function ( err, next, links ) {
 						if ( err && config.debug ) console.error( err );
 						if ( config.debug ) console.log( links );
 						// Show the search results
-						if ( links[0].link ) bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+						if ( links[0].link ) {
+							bot.say( to, who ? who + ': ' + links[0].link : from + ': ' + links[0].link );
+						} else {
+							bot.say( to, from + ': weird... your search for: "' + str + ' site:youtube.com" yielded this: ' + JSON.stringify( links ) );
+						}
 					});
 					break;
 
@@ -422,27 +523,66 @@ bot.addListener( 'message', function( from, to, text, message ) {
 					bot.say( message.args[0], msg );
 					break;
 
+				// Spooge command
+				// case 'spooge':
+				// 	if ( who ) {
+				// 		var msgs = [ '8=👊=D💦', '        💦', '         💦', '        💦💦' ];
+				// 		var msg = '';
+				// 		// Top line
+				// 		for ( var i = 0; i < who.length + 3; i++ ) {
+				// 			msg += '💦';
+				// 		}
+				// 		// Push onto array
+				// 		msgs.push( msg );
+				// 		msg = '💦';
+				// 		// Spaces before name
+				// 		for ( var i = 0; i < ( who.length + 4 ) / 2; i++ ) {
+				// 			msg += ' ';
+				// 		}
+				// 		msg += who;
+				// 		// Spaces after name
+				// 		for ( var i = 0; i < ( who.length + 4 ) / 2; i++ ) {
+				// 			msg += ' ';
+				// 		}
+				// 		msg += '💦';
+				// 		// Push onto array
+				// 		msgs.push( msg );
+				// 		msg = '';
+				// 		// Bottom line
+				// 		for ( var i = 0; i < who.length + 3; i++ ) {
+				// 			msg += '💦';
+				// 		}
+				// 		msgs.push( msg );
+				// 		// Send message
+				// 		msgs.forEach( function( value, index, array ) {
+				// 			bot.say( message.args[0], value );
+				// 		});
+				// 	}
+				// 	break;
+
 				// Tell command
 				case 'tell':
-					if ( who ) {
-						// Add .tell message to the tell array
-						if ( config.debug ) console.log( '[Tell ' + who + '] ' + str  );
-						if ( tell.length ) {
-							var already = false;
-							tell.forEach( function( value, index, array ) {
-								if ( value.from == from && value.message == str ) {
-									already = true;
-								}
-							});
-							if ( ! already ) {
-								tell.push({ from: from, message: str });
-								bot.say( message.args[0], from + ': I\'ll deliver your message to ' + who + ' the next time they join.' );
+					// Make sure their message is setup correctly
+					var sendto = str.split(' ')[0];
+					// Add .tell message to the tell array
+					if ( config.debug ) console.log( '[Tell ' + sendto + '] ' + str  );
+					if ( tell.length ) {
+						var already = false;
+						tell.forEach( function( value, index, array ) {
+							if ( value.from == from && value.message == str ) {
+								already = true;
 							}
-						} else {
-							tell.push({ from: from, message: str });
-							bot.say( message.args[0], from + ': I\'ll deliver your message to ' + who + ' the next time they join.' );
+						});
+						if ( ! already ) {
+							msg = 'I\'ll deliver your message to ' + sendto + ' the next time they join.';
+							tell.push({ from: from, message: str.replace( sendto + ' ', '' ), date: moment().tz( 'America/New_York' ).format( 'M/DD/YY h:mm:ssa z' ) });
 						}
+					} else {
+						msg = 'I\'ll deliver your message to ' + sendto + ' the next time they join.';
+						tell.push({ from: from, message: str.replace( sendto + ' ', '' ), date: moment().tz( 'America/New_York' ).format( 'M/DD/YY h:mm:ssa z' ) });
 					}
+					var msg = who ? who + ': ' + msg : from + ': ' + msg;
+					bot.say( message.args[0], msg );
 					break;
 
 				// Count command
